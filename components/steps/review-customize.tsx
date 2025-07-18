@@ -2,25 +2,24 @@
 
 import { useState } from "react"
 import { useQuote } from "@/components/quote-context"
+import { quoteService } from "@/services/quote-service"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
-import { Calendar, Edit3, Percent, FileText } from "lucide-react"
+import { Calendar, Edit3, Percent, FileText, Loader2 } from "lucide-react"
 
 export function ReviewCustomize() {
-  const { quote, updateQuote, setCurrentStep } = useQuote()
+  const { quote, setQuote, setCurrentStep, saveQuote } = useQuote()
   const [editingItem, setEditingItem] = useState<number | null>(null)
   const [customPrice, setCustomPrice] = useState("")
+  const [isSaving, setIsSaving] = useState(false)
 
-  const subtotal = quote.items.reduce(
-    (sum, item) => sum + (item.customPrice || item.service.basePrice) * item.quantity,
-    0,
-  )
-  const discountAmount = subtotal * (quote.discount / 100)
-  const total = subtotal - discountAmount
+  if (!quote) return <div>Loading...</div>
+
+  const calculation = quoteService.calculateQuote(quote)
 
   const handlePriceUpdate = (index: number) => {
     const newItems = [...quote.items]
@@ -28,7 +27,7 @@ export function ReviewCustomize() {
       ...newItems[index],
       customPrice: Number.parseFloat(customPrice) || newItems[index].service.basePrice,
     }
-    updateQuote({ items: newItems })
+    setQuote({ ...quote, items: newItems })
     setEditingItem(null)
     setCustomPrice("")
   }
@@ -37,16 +36,24 @@ export function ReviewCustomize() {
     if (quantity <= 0) return
     const newItems = [...quote.items]
     newItems[index] = { ...newItems[index], quantity }
-    updateQuote({ items: newItems })
+    setQuote({ ...quote, items: newItems })
   }
 
   const removeItem = (index: number) => {
     const newItems = quote.items.filter((_, i) => i !== index)
-    updateQuote({ items: newItems })
+    setQuote({ ...quote, items: newItems })
   }
 
-  const handleContinue = () => {
-    setCurrentStep(4)
+  const handleContinue = async () => {
+    try {
+      setIsSaving(true)
+      await saveQuote() // Save all customizations
+      setCurrentStep(4)
+    } catch (error) {
+      console.error("Failed to save quote:", error)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
@@ -180,7 +187,7 @@ export function ReviewCustomize() {
                   id="discount"
                   type="number"
                   value={quote.discount}
-                  onChange={(e) => updateQuote({ discount: Number.parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setQuote({ ...quote, discount: Number.parseFloat(e.target.value) || 0 })}
                   placeholder="0"
                   min="0"
                   max="100"
@@ -197,7 +204,7 @@ export function ReviewCustomize() {
                   id="validUntil"
                   type="date"
                   value={quote.validUntil.toISOString().split("T")[0]}
-                  onChange={(e) => updateQuote({ validUntil: new Date(e.target.value) })}
+                  onChange={(e) => setQuote({ ...quote, validUntil: new Date(e.target.value) })}
                   className="mt-1"
                 />
               </div>
@@ -207,7 +214,7 @@ export function ReviewCustomize() {
                 <Textarea
                   id="notes"
                   value={quote.notes}
-                  onChange={(e) => updateQuote({ notes: e.target.value })}
+                  onChange={(e) => setQuote({ ...quote, notes: e.target.value })}
                   placeholder="Add any additional notes or terms..."
                   className="mt-1"
                   rows={3}
@@ -227,13 +234,13 @@ export function ReviewCustomize() {
               <div className="space-y-3">
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
-                  <span>${subtotal.toLocaleString()}</span>
+                  <span>${calculation.subtotal.toLocaleString()}</span>
                 </div>
 
                 {quote.discount > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>Discount ({quote.discount}%):</span>
-                    <span>-${discountAmount.toLocaleString()}</span>
+                    <span>-${calculation.discountAmount.toLocaleString()}</span>
                   </div>
                 )}
 
@@ -241,7 +248,7 @@ export function ReviewCustomize() {
 
                 <div className="flex justify-between font-bold text-lg">
                   <span>Total:</span>
-                  <span>${total.toLocaleString()}</span>
+                  <span>${calculation.total.toLocaleString()}</span>
                 </div>
 
                 <div className="pt-3 text-sm text-gray-600">
@@ -258,8 +265,15 @@ export function ReviewCustomize() {
         <Button variant="outline" onClick={() => setCurrentStep(2)} className="border-gray-300">
           Back
         </Button>
-        <Button onClick={handleContinue} className="bg-blue-600 hover:bg-blue-700">
-          Generate Quote
+        <Button onClick={handleContinue} disabled={isSaving} className="bg-blue-600 hover:bg-blue-700">
+          {isSaving ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Generate Quote"
+          )}
         </Button>
       </div>
     </div>

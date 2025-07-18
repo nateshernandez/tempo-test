@@ -2,18 +2,21 @@
 
 import { useState } from "react"
 import { useQuote } from "@/components/quote-context"
+import { clientService, type CreateClientRequest } from "@/services/client-service"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Search, Plus, Building, Mail, Phone, Check } from "lucide-react"
+import { Search, Plus, Building, Mail, Phone, Check, Loader2 } from "lucide-react"
 
 export function ClientSelection() {
-  const { clients, quote, updateQuote, setCurrentStep } = useQuote()
+  const { clients, quote, setQuote, setCurrentStep, refreshClients, saveQuote } = useQuote()
   const [searchTerm, setSearchTerm] = useState("")
   const [showNewClientDialog, setShowNewClientDialog] = useState(false)
-  const [newClient, setNewClient] = useState({
+  const [isCreatingClient, setIsCreatingClient] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [newClient, setNewClient] = useState<CreateClientRequest>({
     name: "",
     email: "",
     company: "",
@@ -28,22 +31,40 @@ export function ClientSelection() {
   )
 
   const handleClientSelect = (client: any) => {
-    updateQuote({ client })
+    if (!quote) return
+    setQuote({ ...quote, client })
   }
 
-  const handleAddClient = () => {
-    const client = {
-      id: `client-${Date.now()}`,
-      ...newClient,
+  const handleAddClient = async () => {
+    try {
+      setIsCreatingClient(true)
+      const createdClient = await clientService.createClient(newClient)
+
+      if (quote) {
+        setQuote({ ...quote, client: createdClient })
+      }
+
+      await refreshClients()
+      setShowNewClientDialog(false)
+      setNewClient({ name: "", email: "", company: "", phone: "" })
+    } catch (error) {
+      console.error("Failed to create client:", error)
+    } finally {
+      setIsCreatingClient(false)
     }
-    updateQuote({ client })
-    setShowNewClientDialog(false)
-    setNewClient({ name: "", email: "", company: "", phone: "" })
   }
 
-  const handleContinue = () => {
-    if (quote.client) {
+  const handleContinue = async () => {
+    if (!quote?.client) return
+
+    try {
+      setIsSaving(true)
+      await saveQuote() // Save the quote with selected client
       setCurrentStep(2)
+    } catch (error) {
+      console.error("Failed to save quote:", error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -112,9 +133,16 @@ export function ClientSelection() {
               <Button
                 onClick={handleAddClient}
                 className="w-full bg-blue-600 hover:bg-blue-700"
-                disabled={!newClient.name || !newClient.email || !newClient.company}
+                disabled={!newClient.name || !newClient.email || !newClient.company || isCreatingClient}
               >
-                Add Client
+                {isCreatingClient ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  "Add Client"
+                )}
               </Button>
             </div>
           </DialogContent>
@@ -126,7 +154,7 @@ export function ClientSelection() {
           <Card
             key={client.id}
             className={`cursor-pointer transition-all border-2 ${
-              quote.client?.id === client.id
+              quote?.client?.id === client.id
                 ? "border-blue-600 bg-blue-50"
                 : "border-gray-200 hover:border-blue-300 hover:shadow-md"
             }`}
@@ -155,7 +183,7 @@ export function ClientSelection() {
                     </div>
                   </div>
                 </div>
-                {quote.client?.id === client.id && (
+                {quote?.client?.id === client.id && (
                   <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600">
                     <Check className="h-4 w-4 text-white" />
                   </div>
@@ -170,8 +198,19 @@ export function ClientSelection() {
         <Button variant="outline" onClick={() => setCurrentStep(0)} className="border-gray-300">
           Back
         </Button>
-        <Button onClick={handleContinue} disabled={!quote.client} className="bg-blue-600 hover:bg-blue-700">
-          Continue to Services
+        <Button
+          onClick={handleContinue}
+          disabled={!quote?.client || isSaving}
+          className="bg-blue-600 hover:bg-blue-700"
+        >
+          {isSaving ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Continue to Services"
+          )}
         </Button>
       </div>
     </div>

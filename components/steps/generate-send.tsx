@@ -2,16 +2,28 @@
 
 import { useState } from "react"
 import { useQuote } from "@/components/quote-context"
+import { emailService } from "@/services/email-service"
+import { pdfService } from "@/services/pdf-service"
+import { quoteService } from "@/services/quote-service"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
-import { Download, Send, Copy, Check, FileText, Calendar, DollarSign, Plus } from "lucide-react"
+import { Download, Send, Copy, Check, FileText, Calendar, DollarSign, Plus, Loader2 } from "lucide-react"
 
 export function GenerateSend() {
-  const { quote, setCurrentStep, updateQuote } = useQuote()
-  const [emailMessage, setEmailMessage] = useState(`Hi ${quote.client?.name},
+  const { quote, setQuote, setCurrentStep, createNewQuote, saveQuote } = useQuote()
+  const [emailMessage, setEmailMessage] = useState("")
+  const [isSending, setIsSending] = useState(false)
+  const [isSent, setIsSent] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
+
+  // Initialize email message when component mounts
+  useState(() => {
+    if (quote?.client) {
+      setEmailMessage(`Hi ${quote.client.name},
 
 Please find attached your quote for the requested services. This quote is valid until ${quote.validUntil.toLocaleDateString()}.
 
@@ -19,43 +31,69 @@ If you have any questions or would like to discuss any details, please don't hes
 
 Best regards,
 Your Team`)
-  const [isSending, setIsSending] = useState(false)
-  const [isSent, setIsSent] = useState(false)
-  const [copied, setCopied] = useState(false)
+    }
+  })
 
-  const subtotal = quote.items.reduce(
-    (sum, item) => sum + (item.customPrice || item.service.basePrice) * item.quantity,
-    0,
-  )
-  const discountAmount = subtotal * (quote.discount / 100)
-  const total = subtotal - discountAmount
+  if (!quote) {
+    return <div>Loading...</div>
+  }
+
+  const calculation = quoteService.calculateQuote(quote)
 
   const handleSendQuote = async () => {
-    setIsSending(true)
-    // Simulate sending
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    setIsSending(false)
-    setIsSent(true)
-    updateQuote({ status: "sent" })
+    if (!quote.client) return
+
+    try {
+      setIsSending(true)
+
+      // Send the email
+      const emailResult = await emailService.sendQuoteEmail({
+        quoteId: quote.id,
+        recipientEmail: quote.client.email,
+        recipientName: quote.client.name,
+        message: emailMessage,
+        attachPDF: true,
+      })
+
+      if (emailResult.success) {
+        // Update quote status to sent and save
+        const updatedQuote = { ...quote, status: "sent" as const, sentAt: new Date() }
+        setQuote(updatedQuote)
+        await saveQuote()
+        setIsSent(true)
+      } else {
+        throw new Error(emailResult.error || "Failed to send email")
+      }
+    } catch (error) {
+      console.error("Failed to send quote:", error)
+    } finally {
+      setIsSending(false)
+    }
   }
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(`https://tempo.app/quote/${quote.id}`)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const handleDownloadPDF = async () => {
+    try {
+      setIsDownloading(true)
+      await pdfService.downloadQuotePDF(quote.id)
+    } catch (error) {
+      console.error("Failed to download PDF:", error)
+    } finally {
+      setIsDownloading(false)
+    }
   }
 
-  const handleStartNew = () => {
-    updateQuote({
-      id: `quote-${Date.now()}`,
-      client: undefined,
-      items: [],
-      discount: 0,
-      notes: "",
-      validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      status: "draft",
-    })
-    setCurrentStep(0)
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(`https://tempo.app/quote/${quote.id}`)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      console.error("Failed to copy link:", error)
+    }
+  }
+
+  const handleStartNew = async () => {
+    await createNewQuote()
   }
 
   return (
@@ -151,18 +189,18 @@ Your Team`)
                 <div className="w-64 space-y-2">
                   <div className="flex justify-between">
                     <span>Subtotal:</span>
-                    <span>${subtotal.toLocaleString()}</span>
+                    <span>${calculation.subtotal.toLocaleString()}</span>
                   </div>
                   {quote.discount > 0 && (
                     <div className="flex justify-between text-green-600">
                       <span>Discount ({quote.discount}%):</span>
-                      <span>-${discountAmount.toLocaleString()}</span>
+                      <span>-${calculation.discountAmount.toLocaleString()}</span>
                     </div>
                   )}
                   <Separator />
                   <div className="flex justify-between font-bold text-lg">
                     <span>Total:</span>
-                    <span>${total.toLocaleString()}</span>
+                    <span>${calculation.total.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -207,11 +245,14 @@ Your Team`)
                 <>
                   <Button
                     onClick={handleSendQuote}
-                    disabled={isSending}
+                    disabled={isSending || !quote.client}
                     className="w-full bg-blue-600 hover:bg-blue-700"
                   >
                     {isSending ? (
-                      <>Sending...</>
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Sending...
+                      </>
                     ) : (
                       <>
                         <Send className="mr-2 h-4 w-4" />
@@ -220,9 +261,23 @@ Your Team`)
                     )}
                   </Button>
 
-                  <Button variant="outline" className="w-full bg-transparent">
-                    <Download className="mr-2 h-4 w-4" />
-                    Download PDF
+                  <Button
+                    variant="outline"
+                    className="w-full bg-transparent"
+                    onClick={handleDownloadPDF}
+                    disabled={isDownloading}
+                  >
+                    {isDownloading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download PDF
+                      </>
+                    )}
                   </Button>
 
                   <Button variant="outline" onClick={handleCopyLink} className="w-full bg-transparent">
@@ -250,9 +305,23 @@ Your Team`)
                   </div>
 
                   <div className="space-y-2">
-                    <Button variant="outline" className="w-full bg-transparent">
-                      <Download className="mr-2 h-4 w-4" />
-                      Download PDF
+                    <Button
+                      variant="outline"
+                      className="w-full bg-transparent"
+                      onClick={handleDownloadPDF}
+                      disabled={isDownloading}
+                    >
+                      {isDownloading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="mr-2 h-4 w-4" />
+                          Download PDF
+                        </>
+                      )}
                     </Button>
 
                     <Button variant="outline" onClick={handleCopyLink} className="w-full bg-transparent">
@@ -285,7 +354,7 @@ Your Team`)
                     <DollarSign className="h-4 w-4 text-gray-400" />
                     Total Value
                   </span>
-                  <span className="font-medium">${total.toLocaleString()}</span>
+                  <span className="font-medium">${calculation.total.toLocaleString()}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-2">

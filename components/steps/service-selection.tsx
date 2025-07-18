@@ -1,48 +1,73 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useQuote } from "@/components/quote-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Minus, ShoppingCart } from "lucide-react"
+import { Search, Plus, Minus, ShoppingCart, Loader2 } from "lucide-react"
 
 export function ServiceSelection() {
-  const { services, quote, updateQuote, setCurrentStep } = useQuote()
+  const { services, quote, setQuote, setCurrentStep, saveQuote } = useQuote()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All")
+  const [isSaving, setIsSaving] = useState(false)
 
-  const categories = ["All", ...Array.from(new Set(services.map((s) => s.category)))]
+  // Get categories from services
+  const categories = useMemo(() => {
+    const uniqueCategories = Array.from(new Set(services.map((s) => s.category)))
+    return ["All", ...uniqueCategories.sort()]
+  }, [services])
 
-  const filteredServices = services.filter((service) => {
-    const matchesSearch =
-      service.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      service.description.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesCategory = selectedCategory === "All" || service.category === selectedCategory
-    return matchesSearch && matchesCategory
-  })
+  // Filter services based on search and category
+  const filteredServices = useMemo(() => {
+    return services.filter((service) => {
+      const matchesSearch =
+        service.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        service.description.toLowerCase().includes(searchTerm.toLowerCase())
+      const matchesCategory = selectedCategory === "All" || service.category === selectedCategory
+      return matchesSearch && matchesCategory
+    })
+  }, [services, searchTerm, selectedCategory])
 
   const getServiceQuantity = (serviceId: string) => {
+    if (!quote) return 0
     const item = quote.items.find((item) => item.service.id === serviceId)
     return item?.quantity || 0
   }
 
   const updateServiceQuantity = (service: any, quantity: number) => {
+    if (!quote) return
+
     const existingItems = quote.items.filter((item) => item.service.id !== service.id)
     const newItems =
       quantity > 0 ? [...existingItems, { service, quantity, customPrice: service.basePrice }] : existingItems
 
-    updateQuote({ items: newItems })
+    setQuote({ ...quote, items: newItems })
   }
 
   const getTotalItems = () => {
+    if (!quote) return 0
     return quote.items.reduce((sum, item) => sum + item.quantity, 0)
   }
 
-  const handleContinue = () => {
-    if (quote.items.length > 0) {
+  const getSubtotal = () => {
+    if (!quote) return 0
+    return quote.items.reduce((sum, item) => sum + item.service.basePrice * item.quantity, 0)
+  }
+
+  const handleContinue = async () => {
+    if (!quote || quote.items.length === 0) return
+
+    try {
+      setIsSaving(true)
+      await saveQuote() // Save the quote with selected services
       setCurrentStep(3)
+    } catch (error) {
+      console.error("Failed to save quote:", error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -134,7 +159,7 @@ export function ServiceSelection() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {quote.items.length === 0 ? (
+              {!quote || quote.items.length === 0 ? (
                 <p className="text-gray-500 text-center py-4">No services selected</p>
               ) : (
                 <div className="space-y-3">
@@ -153,12 +178,7 @@ export function ServiceSelection() {
                   <div className="pt-3 border-t border-gray-200">
                     <div className="flex justify-between items-center">
                       <p className="font-semibold">Total:</p>
-                      <p className="font-bold text-lg">
-                        $
-                        {quote.items
-                          .reduce((sum, item) => sum + item.service.basePrice * item.quantity, 0)
-                          .toLocaleString()}
-                      </p>
+                      <p className="font-bold text-lg">${getSubtotal().toLocaleString()}</p>
                     </div>
                   </div>
                 </div>
@@ -172,8 +192,19 @@ export function ServiceSelection() {
         <Button variant="outline" onClick={() => setCurrentStep(1)} className="border-gray-300">
           Back
         </Button>
-        <Button onClick={handleContinue} disabled={quote.items.length === 0} className="bg-blue-600 hover:bg-blue-700">
-          Review Quote ({getTotalItems()} {getTotalItems() === 1 ? "item" : "items"})
+        <Button
+          onClick={handleContinue}
+          disabled={!quote || quote.items.length === 0 || isSaving}
+          className="bg-blue-600 hover:bg-blue-700"
+        >
+          {isSaving ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            `Review Quote (${getTotalItems()} ${getTotalItems() === 1 ? "item" : "items"})`
+          )}
         </Button>
       </div>
     </div>

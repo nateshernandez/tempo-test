@@ -1,133 +1,97 @@
 "use client"
 
-import { createContext, useContext, useState, type ReactNode } from "react"
-
-interface Client {
-  id: string
-  name: string
-  email: string
-  company: string
-  phone?: string
-}
-
-interface Service {
-  id: string
-  name: string
-  description: string
-  basePrice: number
-  category: string
-}
-
-interface QuoteItem {
-  service: Service
-  quantity: number
-  customPrice?: number
-  notes?: string
-}
-
-interface Quote {
-  id: string
-  client?: Client
-  items: QuoteItem[]
-  discount: number
-  notes: string
-  validUntil: Date
-  status: "draft" | "sent" | "accepted" | "rejected"
-}
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { clientService, type Client } from "@/services/client-service"
+import { serviceService, type Service } from "@/services/service-service"
+import { quoteService, type Quote } from "@/services/quote-service"
 
 interface QuoteContextType {
   currentStep: number
   setCurrentStep: (step: number) => void
-  quote: Quote
-  updateQuote: (updates: Partial<Quote>) => void
+  quote: Quote | null
+  setQuote: (quote: Quote) => void
   clients: Client[]
   services: Service[]
+  isLoading: boolean
+  error: string | null
+  refreshClients: () => Promise<void>
+  createNewQuote: () => Promise<void>
+  saveQuote: () => Promise<void>
 }
 
 const QuoteContext = createContext<QuoteContextType | undefined>(undefined)
 
-const mockClients: Client[] = [
-  {
-    id: "1",
-    name: "Sarah Johnson",
-    email: "sarah@techcorp.com",
-    company: "TechCorp Solutions",
-    phone: "+1 (555) 123-4567",
-  },
-  {
-    id: "2",
-    name: "Michael Chen",
-    email: "m.chen@innovate.io",
-    company: "Innovate Digital",
-    phone: "+1 (555) 987-6543",
-  },
-  {
-    id: "3",
-    name: "Emily Rodriguez",
-    email: "emily@startupx.com",
-    company: "StartupX",
-    phone: "+1 (555) 456-7890",
-  },
-]
-
-const mockServices: Service[] = [
-  {
-    id: "1",
-    name: "Brand Strategy Consultation",
-    description: "Comprehensive brand positioning and strategy development",
-    basePrice: 5000,
-    category: "Strategy",
-  },
-  {
-    id: "2",
-    name: "Logo Design Package",
-    description: "Complete logo design with 3 concepts and unlimited revisions",
-    basePrice: 2500,
-    category: "Design",
-  },
-  {
-    id: "3",
-    name: "Website Development",
-    description: "Custom responsive website with CMS integration",
-    basePrice: 8000,
-    category: "Development",
-  },
-  {
-    id: "4",
-    name: "SEO Optimization",
-    description: "3-month SEO campaign with keyword research and optimization",
-    basePrice: 3000,
-    category: "Marketing",
-  },
-  {
-    id: "5",
-    name: "Social Media Management",
-    description: "Monthly social media content creation and management",
-    basePrice: 1500,
-    category: "Marketing",
-  },
-  {
-    id: "6",
-    name: "Content Writing",
-    description: "Professional copywriting for web and marketing materials",
-    basePrice: 1200,
-    category: "Content",
-  },
-]
-
 export function QuoteProvider({ children }: { children: ReactNode }) {
   const [currentStep, setCurrentStep] = useState(0)
-  const [quote, setQuote] = useState<Quote>({
-    id: `quote-${Date.now()}`,
-    items: [],
-    discount: 0,
-    notes: "",
-    validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-    status: "draft",
-  })
+  const [quote, setQuote] = useState<Quote | null>(null)
+  const [clients, setClients] = useState<Client[]>([])
+  const [services, setServices] = useState<Service[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const updateQuote = (updates: Partial<Quote>) => {
-    setQuote((prev) => ({ ...prev, ...updates }))
+  // Initialize data on mount
+  useEffect(() => {
+    initializeData()
+  }, [])
+
+  const initializeData = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+
+      // Load initial data and create a new quote
+      const [clientsData, servicesData, newQuote] = await Promise.all([
+        clientService.getClients(),
+        serviceService.getServices(),
+        quoteService.createQuote(),
+      ])
+
+      setClients(clientsData)
+      setServices(servicesData)
+      setQuote(newQuote)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to initialize data")
+      console.error("Failed to initialize data:", err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const refreshClients = async () => {
+    try {
+      setError(null)
+      const clientsData = await clientService.getClients()
+      setClients(clientsData)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh clients")
+      console.error("Failed to refresh clients:", err)
+    }
+  }
+
+  const createNewQuote = async () => {
+    try {
+      setError(null)
+      const newQuote = await quoteService.createQuote()
+      setQuote(newQuote)
+      setCurrentStep(0)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create new quote")
+      console.error("Failed to create new quote:", err)
+    }
+  }
+
+  const saveQuote = async () => {
+    if (!quote) return
+
+    try {
+      setError(null)
+      const updatedQuote = await quoteService.updateQuote(quote)
+      setQuote(updatedQuote)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save quote")
+      console.error("Failed to save quote:", err)
+      throw err // Re-throw so components can handle the error
+    }
   }
 
   return (
@@ -136,9 +100,14 @@ export function QuoteProvider({ children }: { children: ReactNode }) {
         currentStep,
         setCurrentStep,
         quote,
-        updateQuote,
-        clients: mockClients,
-        services: mockServices,
+        setQuote,
+        clients,
+        services,
+        isLoading,
+        error,
+        refreshClients,
+        createNewQuote,
+        saveQuote,
       }}
     >
       {children}
